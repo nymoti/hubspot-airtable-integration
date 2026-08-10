@@ -122,6 +122,10 @@ const config = {
 
   logging: {
     level: optional('LOG_LEVEL', 'info'),
+    // Suppresses all output. Used by the test suite, which deliberately
+    // exercises error paths and would otherwise bury the result summary in
+    // stack traces for failures it expects.
+    silent: optional('LOG_SILENT', 'false') === 'true',
     // On Cloud Functions stdout is already captured by Cloud Logging, so file
     // transports are disabled there.
     toFile: optional('LOG_TO_FILE', 'true') === 'true',

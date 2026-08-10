@@ -82,6 +82,7 @@ if (config.logging.toFile && !isCloudFunction) {
 
 const logger = winston.createLogger({
   level: config.logging.level,
+  silent: config.logging.silent,
   defaultMeta: { service: process.env.K_SERVICE || 'hubspot-sync' },
   transports,
   exitOnError: false,
