@@ -132,6 +132,95 @@ describe('POST /airtable-webhook', () => {
   });
 });
 
+describe('AirtableWebhookApi', () => {
+  const { AirtableWebhookApi } = require('../src/integration/services/airtableWebhookApi');
+
+  /** @param {object} body @param {number} [status] */
+  function stubFetch(body, status = 200) {
+    return jest.fn().mockResolvedValue({
+      ok: status < 400,
+      status,
+      json: async () => body,
+    });
+  }
+
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const api = () =>
+    new AirtableWebhookApi({
+      apiKey: 'pat-test',
+      baseId: 'appTest',
+      apiBaseUrl: 'https://airtable.test/v0',
+      logger: silentLogger(),
+    });
+
+  it('builds URLs from the injected host, not a hardcoded one', async () => {
+    global.fetch = stubFetch({ webhooks: [] });
+
+    await api().list();
+
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      'https://airtable.test/v0/bases/appTest/webhooks'
+    );
+  });
+
+  it('authenticates with the personal access token', async () => {
+    global.fetch = stubFetch({ webhooks: [] });
+
+    await api().list();
+
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer pat-test');
+  });
+
+  it('registers a webhook watching table data adds and updates', async () => {
+    global.fetch = stubFetch({ id: 'achX', macSecretBase64: 'c2VjcmV0' });
+
+    const result = await api().create('https://example.test/airtable-webhook');
+
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.notificationUrl).toBe('https://example.test/airtable-webhook');
+    expect(body.specification.options.filters).toEqual({
+      dataTypes: ['tableData'],
+      // Deletions are deliberately not watched — removing an Airtable row must
+      // not destroy a CRM record.
+      changeTypes: ['add', 'update'],
+    });
+    expect(result.macSecretBase64).toBe('c2VjcmV0');
+  });
+
+  it('refuses a non-https notification URL', async () => {
+    global.fetch = stubFetch({});
+
+    await expect(api().create('http://insecure.test/hook')).rejects.toThrow(/https/);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an Airtable error message', async () => {
+    global.fetch = stubFetch({ error: { message: 'INVALID_PERMISSIONS' } }, 403);
+
+    await expect(api().list()).rejects.toThrow('INVALID_PERMISSIONS');
+  });
+
+  it('hits the refresh endpoint for the given webhook', async () => {
+    global.fetch = stubFetch({ expirationTime: '2026-01-08T00:00:00.000Z' });
+
+    await api().refresh('achX');
+
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      'https://airtable.test/v0/bases/appTest/webhooks/achX/refresh'
+    );
+    expect(global.fetch.mock.calls[0][1].method).toBe('POST');
+  });
+});
+
 describe('RescanService', () => {
   /** Airtable stub returning canned modified records per table. */
   function fakeAirtable(byTable) {

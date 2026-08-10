@@ -30,7 +30,7 @@ function mapDealFields(fields) {
     amount: parseAmount(fields.amount),
     dealstage: mapStatusToDealStage(fields.status),
     closedate: parseDate(fields.close_date),
-    pipeline: 'default',
+    pipeline: config.hubspot.defaultPipeline,
   });
 }
 

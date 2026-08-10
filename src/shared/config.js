@@ -38,6 +38,30 @@ const config = {
       return required('HUBSPOT_ACCESS_TOKEN');
     },
     baseUrl: optional('HUBSPOT_BASE_URL', 'https://api.hubapi.com'),
+
+    /**
+     * Custom property used for duplicate detection, and the companion property
+     * recording which system a record came from. Configurable because the
+     * names must not collide with properties a portal already uses.
+     */
+    externalIdProperty: optional('HUBSPOT_EXTERNAL_ID_PROPERTY', 'external_source_id'),
+    sourceSystemProperty: optional(
+      'HUBSPOT_SOURCE_SYSTEM_PROPERTY',
+      'external_source_system'
+    ),
+
+    /** Pipeline new deals are placed in. Portals rename or add pipelines. */
+    defaultPipeline: optional('HUBSPOT_DEFAULT_PIPELINE', 'default'),
+
+    /**
+     * Stage used when the source status is anything other than Won or Lost.
+     * The brief specifies `qualifiedtobuy`; portals with a custom pipeline
+     * will have different internal stage ids.
+     */
+    defaultDealStage: optional('HUBSPOT_DEFAULT_DEAL_STAGE', 'qualifiedtobuy'),
+    wonDealStage: optional('HUBSPOT_WON_DEAL_STAGE', 'closedwon'),
+    lostDealStage: optional('HUBSPOT_LOST_DEAL_STAGE', 'closedlost'),
+
     // HubSpot private apps allow 190 requests / 10s. We stay comfortably under.
     maxRequestsPerSecond: toInt(optional('HUBSPOT_MAX_RPS'), 8),
     maxRetries: toInt(optional('HUBSPOT_MAX_RETRIES'), 5),
@@ -51,6 +75,13 @@ const config = {
     get baseId() {
       return required('AIRTABLE_BASE_ID');
     },
+
+    /**
+     * Airtable REST host. The `airtable` SDK handles the records API itself;
+     * this is used by the Webhooks API client, which the SDK does not cover.
+     * Configurable so tests and local proxies can point elsewhere.
+     */
+    apiBaseUrl: optional('AIRTABLE_API_BASE_URL', 'https://api.airtable.com/v0'),
     tables: {
       companies: optional('AIRTABLE_TABLE_COMPANIES', 'Companies'),
       contacts: optional('AIRTABLE_TABLE_CONTACTS', 'Contacts'),

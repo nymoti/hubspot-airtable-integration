@@ -20,18 +20,18 @@ const { withRetry } = require('../../shared/retry');
  * Cloud Scheduler.
  */
 
-const API_BASE = 'https://api.airtable.com/v0/bases';
-
 class AirtableWebhookApi {
   /**
    * @param {object} [options]
    * @param {string} [options.apiKey]
    * @param {string} [options.baseId]
+   * @param {string} [options.apiBaseUrl]
    * @param {import('winston').Logger} [options.logger]
    */
   constructor(options = {}) {
     this.apiKey = options.apiKey || config.airtable.apiKey;
     this.baseId = options.baseId || config.airtable.baseId;
+    this.apiBaseUrl = options.apiBaseUrl || config.airtable.apiBaseUrl;
     this.log = options.logger || logger;
   }
 
@@ -42,7 +42,7 @@ class AirtableWebhookApi {
    * @returns {Promise<any>}
    */
   async request(method, path, body) {
-    const url = `${API_BASE}/${this.baseId}/webhooks${path}`;
+    const url = `${this.apiBaseUrl}/bases/${this.baseId}/webhooks${path}`;
 
     const send = async () => {
       const response = await fetch(url, {

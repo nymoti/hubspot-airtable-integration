@@ -4,6 +4,7 @@ const HubSpotClient = require('../../shared/hubspotClient');
 const logger = require('../../shared/logger');
 const {
   EXTERNAL_ID_PROPERTY,
+  SOURCE_SYSTEM_PROPERTY,
   buildExternalId,
 } = require('../../shared/hubspotSchema');
 
@@ -143,7 +144,7 @@ class HubSpotService {
     const payload = {
       ...properties,
       [EXTERNAL_ID_PROPERTY]: externalId,
-      external_source_system: 'airtable',
+      [SOURCE_SYSTEM_PROPERTY]: 'airtable',
     };
 
     if (existing) {

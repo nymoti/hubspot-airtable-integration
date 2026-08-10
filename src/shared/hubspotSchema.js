@@ -1,5 +1,7 @@
 'use strict';
 
+const config = require('./config');
+
 /**
  * HubSpot object types and the custom properties this project relies on.
  *
@@ -22,10 +24,10 @@ const OBJECT_TYPES = {
 };
 
 /** Name of the external-id property, identical on every object type. */
-const EXTERNAL_ID_PROPERTY = 'external_source_id';
+const EXTERNAL_ID_PROPERTY = config.hubspot.externalIdProperty;
 
 /** Records which system a record was synced from, for auditability. */
-const SOURCE_SYSTEM_PROPERTY = 'external_source_system';
+const SOURCE_SYSTEM_PROPERTY = config.hubspot.sourceSystemProperty;
 
 const PROPERTY_GROUPS = {
   [OBJECT_TYPES.COMPANIES]: 'companyinformation',

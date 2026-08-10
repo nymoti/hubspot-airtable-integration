@@ -13,15 +13,19 @@
  * options are free text and drift over time ("won", "Won ", "WON").
  */
 
-const DEFAULT_STAGE = 'qualifiedtobuy';
+const config = require('../shared/config');
+
+const DEFAULT_STAGE = config.hubspot.defaultDealStage;
+const WON_STAGE = config.hubspot.wonDealStage;
+const LOST_STAGE = config.hubspot.lostDealStage;
 
 const STAGE_BY_STATUS = {
-  won: 'closedwon',
-  'closed won': 'closedwon',
-  closedwon: 'closedwon',
-  lost: 'closedlost',
-  'closed lost': 'closedlost',
-  closedlost: 'closedlost',
+  won: WON_STAGE,
+  'closed won': WON_STAGE,
+  closedwon: WON_STAGE,
+  lost: LOST_STAGE,
+  'closed lost': LOST_STAGE,
+  closedlost: LOST_STAGE,
 };
 
 /**
@@ -35,4 +39,10 @@ function mapStatusToDealStage(status) {
   return STAGE_BY_STATUS[normalised] || DEFAULT_STAGE;
 }
 
-module.exports = { mapStatusToDealStage, DEFAULT_STAGE, STAGE_BY_STATUS };
+module.exports = {
+  mapStatusToDealStage,
+  DEFAULT_STAGE,
+  WON_STAGE,
+  LOST_STAGE,
+  STAGE_BY_STATUS,
+};

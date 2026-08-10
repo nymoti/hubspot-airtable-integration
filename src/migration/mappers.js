@@ -9,6 +9,7 @@
  * Rows that cannot be imported at all are rejected via `errors`.
  */
 
+const config = require('../shared/config');
 const {
   parseDate,
   parseAmount,
@@ -70,7 +71,7 @@ const KNOWN_DEAL_STAGES = new Set([
   'closedlost',
 ]);
 
-const DEFAULT_DEAL_STAGE = 'qualifiedtobuy';
+const DEFAULT_DEAL_STAGE = config.hubspot.defaultDealStage;
 
 /** HubSpot's `lifecyclestage` internal values. */
 const KNOWN_LIFECYCLE_STAGES = new Set([
@@ -233,7 +234,7 @@ function mapDeal(row) {
       amount,
       dealstage: stage,
       closedate: closeDate,
-      pipeline: 'default',
+      pipeline: config.hubspot.defaultPipeline,
       [EXTERNAL_ID_PROPERTY]: buildExternalId(
         SOURCE,
         OBJECT_TYPES.DEALS,
