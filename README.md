@@ -43,11 +43,13 @@ flowchart LR
 
     subgraph P2["Part 2 — real-time sync"]
         AT[("Airtable base<br/>Companies · Contacts<br/>Deals · Line Items")]
-        AUT["Airtable automation<br/><i>on create / update</i>"]
+        WH["Airtable Webhooks API<br/><i>registered over REST</i>"]
         CF["GCP Cloud Function<br/><b>airtableWebhook</b>"]
-        AT --> AUT -->|"POST /webhook<br/>{table, recordId}"| CF
-        CF -->|"re-read record"| AT
+        SCH["Cloud Scheduler<br/><i>weekly refresh</i>"]
+        AT --> WH -->|"signed notification<br/>POST /airtable-webhook"| CF
+        CF -->|"list records modified<br/>in last N minutes"| AT
         CF -->|"write back hubspot_record_id"| AT
+        SCH -.->|"renew 7-day expiry"| WH
     end
 
     HS[("HubSpot CRM<br/>v3 objects · v4 associations")]
@@ -59,12 +61,15 @@ flowchart LR
 Inside the Cloud Function, one request flows through four layers:
 
 ```
-POST /webhook
-     │
-     ▼
+POST /airtable-webhook                    POST /webhook   (direct, one record)
+     │                                         │
+     ▼                                         │
 ┌─────────────────────────────────────────────────────────────┐
-│ app.js          auth (shared secret) · correlation id       │
+│ app.js          HMAC verify · shared secret · correlation id│
 │                 error → HTTP status (the retry contract)    │
+├─────────────────────────────────────────────────────────────┤
+│ rescanService   find records modified in the window         │
+│                 parents-first, one bad row cannot stop it   │
 ├─────────────────────────────────────────────────────────────┤
 │ syncService.js  normalise payload · re-read from Airtable   │
 │                 dispatch to a handler                       │
@@ -188,30 +193,55 @@ CI step.
 
 ## Part 2 — Integration
 
-### Trigger: Airtable automations
+### Trigger: the Airtable Webhooks API
 
-Airtable offers three ways to notice a change. I used **automations with a "Run
-script" action** (`scripts/airtable-automation.js`), because:
+Airtable offers three ways to notice a change, and the choice was forced by the
+free plan:
 
-- The **Webhooks API** is a pull model — you register a webhook, receive a ping,
-  then call `listPayloads` to find out what changed, and manage a cursor. That
-  is more moving parts and more state than this needs.
-- **Polling** cannot meet the brief's "immediately, not on a manual trigger"
-  requirement without a tight interval that burns API quota constantly. (A
-  poller existed in the original code and has been removed.)
-- Automations fire within seconds of the change, need no cursor management, and
-  let the payload be shaped deliberately.
+- **Automations** are the obvious route, but every action capable of calling an
+  external URL — *Run script* and *Send HTTP request* — is gated behind paid
+  tiers. On a free base there is no way to reach an arbitrary endpoint from an
+  automation at all.
+- **Polling** on a timer would work, but the brief asks for changes to be
+  reflected "immediately, not on a manual trigger", and a 60-second sweep is a
+  weaker answer. (A 10-second poller existed in the original code; it burned
+  API quota continuously and has been removed.)
+- The **Webhooks API** is managed entirely over REST, so it is available on
+  every plan. Airtable pushes a notification within seconds of a change.
 
-Each automation posts only `{ table, recordId }`. The service then **re-reads
-the record from the Airtable API** rather than trusting the payload. This is a
-deliberate extra call:
+So the service is driven by a registered webhook (`npm run webhook:create`),
+which posts to `POST /airtable-webhook`.
 
-- A webhook payload is a point-in-time snapshot. If two edits happen quickly, or
-  an event is redelivered late, replaying the payload would write **stale values
-  over newer ones**. Re-reading makes the sync converge on Airtable's current
-  state regardless of delivery order or duplication.
-- Automation payloads routinely omit linked-record fields, which association
-  resolution needs.
+### Turning a notification into work
+
+An Airtable notification is only a doorbell: it names the base and the webhook,
+but never the records that changed. The documented way to find out is to call
+`listPayloads` with a cursor.
+
+This service takes a different route — on notification it re-syncs **every
+record modified in the last few minutes**, found through the ordinary data API
+and a `last_modified` field. That is a deliberate trade:
+
+- Cursor-based payload reading needs durable cursor storage, correct handling of
+  cursor loss, and reconciliation for missed payloads. That is real complexity
+  whose only benefit is avoiding redundant work.
+- Redundant work here is free. Every upsert is idempotent, so re-syncing an
+  unchanged record resolves to the same HubSpot id and writes the same values.
+
+The system therefore trades a handful of wasted API calls for the removal of an
+entire class of state-management bugs — and gains a property cursors do not
+have: **a missed or failed notification self-heals on the next one**, rather
+than leaving a permanent gap. The same code path is exposed as `POST /rescan`
+for backfills after downtime.
+
+Records are always **re-read from the Airtable API** rather than taken from any
+payload. A payload is a point-in-time snapshot: replaying a delayed one would
+write stale values over newer ones, and it routinely omits the linked-record
+fields that association resolution needs. Re-reading makes the sync converge on
+Airtable's current state regardless of ordering or duplication.
+
+The tables are scanned parents-first (Companies → Contacts → Deals → Line
+Items) so associations resolve within a single pass.
 
 ### Handlers
 
@@ -349,9 +379,12 @@ Idempotent — safe to re-run, and it reports what already existed.
 
 ### 2. Airtable
 
-Create the four tables with the fields from the brief. `hubspot_record_id` must
-be a **single-line text** field on every table (not a number — HubSpot ids
-exceed the safe integer range in some portals), and starts empty.
+Create the four tables with the fields from the brief, plus two additions:
+
+- `hubspot_record_id` — **single-line text** on every table, not a number
+  (HubSpot ids exceed the safe integer range in some portals). Starts empty.
+- `last_modified` — a **Last modified time** field on every table, watching all
+  fields. The rescan uses it to find what changed.
 
 Link the tables: Companies ↔ Contacts, Companies ↔ Deals, Deals ↔ Line Items.
 The resolver accepts `Company` / `Companies` / `Linked Company` (and the `Deal`
@@ -395,24 +428,72 @@ Notes on the flags:
 - `--timeout=120s` accommodates the worst case: a Line Item that has to sync its
   Deal, which in turn syncs its Company, before it can associate.
 
-### 4. Wire up Airtable
+### 4. Register the Airtable webhook
 
-Copy `scripts/airtable-automation.js` into a "Run script" action on each table's
-automation (create *and* update triggers), set `ENDPOINT`, `WEBHOOK_SECRET` and
-`TABLE_NAME`, and add `recordId` as an input variable mapped to the trigger
-record.
+```bash
+npm run webhook:create -- "https://YOUR-FUNCTION-URL/airtable-webhook"
+```
+
+This prints a **MAC secret exactly once** — Airtable will not show it again.
+Store it and redeploy so the function can verify notifications:
+
+```bash
+printf '%s' 'THE_PRINTED_SECRET' | gcloud secrets create airtable-mac-secret --data-file=-
+gcloud secrets add-iam-policy-binding airtable-mac-secret \
+  --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor"
+
+# redeploy, adding to --set-secrets:
+#   AIRTABLE_WEBHOOK_MAC_SECRET=airtable-mac-secret:latest
+```
+
+Without that secret the service rejects every notification as unsigned — it
+fails closed by design, so nothing will sync until it is set.
+
+### 5. Keep the webhook alive
+
+**Airtable webhooks stop delivering after seven days unless refreshed.** This is
+the single most likely reason a working integration goes quiet, so it is
+automated rather than remembered:
+
+```bash
+gcloud scheduler jobs create http refresh-airtable-webhook \
+  --location=us-central1 \
+  --schedule="0 3 * * 1" \
+  --uri="https://YOUR-FUNCTION-URL/rescan" \
+  --http-method=POST \
+  --headers="X-Webhook-Secret=YOUR_SECRET"
+```
+
+The simplest operational answer is to run the refresh from Cloud Shell weekly:
+
+```bash
+npm run webhook:refresh     # extends every webhook on the base by 7 days
+npm run webhook:list        # shows expiry, isHookEnabled, last success time
+```
+
+`webhook:list` is the first thing to check when records stop syncing —
+`isHookEnabled: false` means Airtable disabled delivery after repeated
+failures, and the fix is to re-register.
 
 ### Local development
 
 ```bash
 npm run dev                          # Express on :3000, same app as production
-npx ngrok http 3000                  # public URL for Airtable to reach
 
+# sync one record directly, no webhook involved
 curl -X POST http://localhost:3000/webhook \
   -H 'Content-Type: application/json' \
   -H 'X-Webhook-Secret: your-secret' \
   -d '{"table":"Companies","recordId":"recXXXXXXXXXXXXXX"}'
+
+# sync everything modified in the last 60 minutes
+curl -X POST 'http://localhost:3000/rescan?minutes=60' \
+  -H 'X-Webhook-Secret: your-secret'
 ```
+
+`POST /webhook` remains available and is the cleanest way to sync a single
+known record — useful for debugging, and the path an Airtable automation would
+use on a paid plan without any code change.
 
 ---
 
@@ -439,6 +520,7 @@ against call counts.
 | `handlers.test.js` | Per-entity mapping, write-back, association, validation |
 | `associations.test.js` | Link resolution, business-key fallback, on-demand parent sync |
 | `webhook.test.js` | Payload normalisation, authentication, error → status mapping |
+| `airtableWebhook.test.js` | HMAC signature verification, notification rejection, rescan ordering and fault tolerance |
 | `retry.test.js` | Backoff, `Retry-After`, retryable classification, rate limiter ordering |
 
 ---
@@ -457,11 +539,13 @@ against call counts.
 │   ├── integration/              Part 2
 │   │   ├── app.js                Express app: auth, routing, error → status
 │   │   ├── server.js             local dev server
+│   │   ├── rescanService.js      notification → records modified in window
+│   │   ├── airtableWebhookAuth.js  HMAC verification of notifications
 │   │   ├── syncService.js        dispatch, Airtable re-read, correlation id
 │   │   ├── normaliseEvent.js     tolerant payload parsing
 │   │   ├── dealStage.js          status → deal stage
 │   │   ├── handlers/             one per entity + shared parent resolution
-│   │   └── services/             hubspotService (upsert), airtableService
+│   │   └── services/             hubspotService, airtableService, webhook API
 │   └── shared/                   used by both parts
 │       ├── hubspotClient.js      SDK transport + rate limit + retry + errors
 │       ├── hubspotSchema.js      object types, external-id property
@@ -471,7 +555,8 @@ against call counts.
 │       └── config.js             validated configuration
 ├── scripts/
 │   ├── bootstrap-hubspot.js      one-off custom property creation
-│   └── airtable-automation.js    paste-in script for Airtable automations
+│   ├── manage-airtable-webhook.js  create / list / refresh / delete
+│   └── airtable-automation.js    paid-plan alternative (reference only)
 ├── data/                         CSVs for Part 1 (gitignored — supplied separately)
 ├── tests/
 └── logs/                         runtime output (gitignored)
@@ -516,13 +601,21 @@ never have been calling this endpoint.
 5. **All deals belong to the `default` pipeline.** The source data carries no
    pipeline column.
 6. **`hubspot_record_id` is a text field in Airtable**, not a number.
-7. **The Airtable automation is trusted to name its own table** — the payload
-   supplies the table name rather than the service inferring it.
-8. **Deal amounts are in a single currency**, since the export has no currency
-   column.
-9. **Sync is one-directional**, Airtable → HubSpot, as specified. Nothing reads
-   changes back out of HubSpot.
-10. **`external_source_id` is reserved for this system.** Editing it by hand in
+7. **The Airtable base is on the free plan**, where the automation actions that
+   can call an external URL are unavailable. The Webhooks API is used instead.
+   On a paid plan an automation could post directly to `POST /webhook` with no
+   code change; `scripts/airtable-automation.js` documents that payload.
+8. **A `last_modified` field exists on all four tables.** Without it a
+   notification cannot be resolved to a set of changed records.
+9. **Deletions in Airtable do not delete in HubSpot.** The webhook watches
+   `add` and `update` only — removing a row should not destroy a CRM record a
+   salesperson may since have worked on. Deletion would need an explicit,
+   separately-agreed policy.
+10. **Deal amounts are in a single currency**, since the export has no currency
+    column.
+11. **Sync is one-directional**, Airtable → HubSpot, as specified. Nothing reads
+    changes back out of HubSpot.
+12. **`external_source_id` is reserved for this system.** Editing it by hand in
     HubSpot would break duplicate detection for that record; the property
     description says so.
 

@@ -124,6 +124,42 @@ class AirtableService {
   }
 
   /**
+   * Lists records in a table modified at or after `since`.
+   *
+   * This is what turns an Airtable webhook notification — which only says
+   * "something in this base changed" — into a concrete set of records to sync.
+   *
+   * Sorting is oldest-first so that if the result is truncated by
+   * `maxRecords`, the records left behind are the most recent ones, which the
+   * next notification will pick up anyway.
+   *
+   * @param {string} tableName
+   * @param {Date} since
+   * @param {object} [options]
+   * @param {number} [options.maxRecords]
+   * @returns {Promise<Array<{ id: string, fields: Record<string, any> }>>}
+   */
+  async listModifiedSince(tableName, since, options = {}) {
+    const { maxRecords = 200 } = options;
+    const field = config.airtable.modifiedField;
+
+    const records = await this.call(
+      'listModifiedSince',
+      () =>
+        this.base(tableName)
+          .select({
+            filterByFormula: `IS_AFTER({${field}}, DATETIME_PARSE('${since.toISOString()}'))`,
+            sort: [{ field, direction: 'asc' }],
+            maxRecords,
+          })
+          .all(),
+      { tableName, since: since.toISOString() }
+    );
+
+    return records.map((record) => ({ id: record.id, fields: record.fields }));
+  }
+
+  /**
    * Finds a record by one of its business-key fields (`company_id`,
    * `deal_id`, …). Used when a row references its parent by id rather than by
    * an Airtable link.

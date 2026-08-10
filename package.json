@@ -8,6 +8,10 @@
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap-hubspot.js",
+    "webhook:create": "node scripts/manage-airtable-webhook.js create",
+    "webhook:list": "node scripts/manage-airtable-webhook.js list",
+    "webhook:refresh": "node scripts/manage-airtable-webhook.js refresh",
+    "webhook:delete": "node scripts/manage-airtable-webhook.js delete",
     "migrate": "node src/migration/index.js",
     "migrate:dry-run": "node src/migration/index.js --dry-run",
     "start": "functions-framework --target=airtableWebhook --source=.",

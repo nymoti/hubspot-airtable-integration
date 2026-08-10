@@ -57,6 +57,32 @@ const config = {
       deals: optional('AIRTABLE_TABLE_DEALS', 'Deals'),
       lineItems: optional('AIRTABLE_TABLE_LINE_ITEMS', 'Line Items'),
     },
+
+    /**
+     * "Last modified time" field, present on all four tables. The rescan uses
+     * it to find what changed since the previous notification.
+     */
+    modifiedField: optional('AIRTABLE_MODIFIED_FIELD', 'last_modified'),
+
+    webhook: {
+      /**
+       * Base64 MAC secret returned when the webhook was registered. Airtable
+       * signs every notification with it; without it we cannot tell a genuine
+       * notification from anyone who guessed the URL.
+       */
+      macSecret: optional('AIRTABLE_WEBHOOK_MAC_SECRET', ''),
+
+      /**
+       * How far back a notification-triggered rescan looks. Generous on
+       * purpose: re-processing an unchanged record is a no-op thanks to the
+       * idempotent upsert, whereas missing one leaves HubSpot stale. The
+       * window absorbs clock skew and delayed notifications.
+       */
+      lookbackMinutes: toInt(optional('RESCAN_LOOKBACK_MINUTES'), 10),
+
+      /** Safety bound on how many records one rescan will process. */
+      maxRecordsPerScan: toInt(optional('RESCAN_MAX_RECORDS'), 200),
+    },
   },
 
   // Shared secret Airtable must send as `X-Webhook-Secret`. Optional in local
