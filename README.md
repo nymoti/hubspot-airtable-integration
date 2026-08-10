@@ -91,6 +91,7 @@ with no network access.
 ```bash
 npm install
 cp .env.example .env      # then fill in your credentials
+mkdir -p data             # then add companies.csv, contacts.csv, deals.csv
 
 npm run bootstrap         # one-off: create the custom properties in HubSpot
 npm test                  # 140 tests, no network calls
@@ -100,10 +101,14 @@ npm run migrate           # Part 1: import for real
 npm run dev               # Part 2: run the sync service locally on :3000
 ```
 
+> **On sensitive data.** `data/` is excluded from version control — the three
+> CSVs contain real company, contact and deal records, and belong in the
+> assessment package rather than in a public repository. `.env`, `logs/` and
+> `mappings.json` are excluded for the same reason.
+>
 > **Rotate your credentials.** The `.env` in the original working copy held a
-> live HubSpot private-app token and an Airtable PAT. `.gitignore` now excludes
-> `.env`, but both keys should be revoked and reissued before this repo is
-> shared, since they existed in plain text on disk.
+> live HubSpot private-app token and an Airtable PAT in plain text. Both should
+> be revoked and reissued before this repo is shared.
 
 ---
 
@@ -467,7 +472,7 @@ against call counts.
 ├── scripts/
 │   ├── bootstrap-hubspot.js      one-off custom property creation
 │   └── airtable-automation.js    paste-in script for Airtable automations
-├── data/                         CSVs (Part 1)
+├── data/                         CSVs for Part 1 (gitignored — supplied separately)
 ├── tests/
 └── logs/                         runtime output (gitignored)
 ```
