@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Source data for the Part 1 migration. Contains real company, contact and
+# deal records, so it is kept out of the repository entirely.
+data/
+
+# Logs and migration output (also derived from that customer data)
+logs/
+*.log
+
+# Migration state from earlier runs
+mappings.json
+
+# Test output
+coverage/
+
+# GCP deployment artefacts
+.gcloudignore.local
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

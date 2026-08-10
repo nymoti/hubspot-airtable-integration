@@ -1,0 +1,21 @@
+# Files excluded from the Cloud Functions deployment bundle.
+# Keeping this tight speeds up deploys and keeps customer data out of GCP
+# source storage.
+
+.git/
+.gitignore
+node_modules/
+
+# Secrets are injected via Secret Manager, never bundled.
+.env
+.env.*
+
+# Part 1 only — the migration is a local CLI, not part of the deployed service.
+data/
+logs/
+tests/
+coverage/
+mappings.json
+
+*.md
+!README.md
