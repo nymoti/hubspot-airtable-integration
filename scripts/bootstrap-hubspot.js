@@ -33,7 +33,27 @@ async function bootstrap() {
         continue;
       }
 
-      await hubspot.createProperty(objectType, definition);
+      try {
+        await hubspot.createProperty(objectType, definition);
+      } catch (error) {
+        // HubSpot answers a missing scope with a 403 listing every scope that
+        // could conceivably grant the call — 26 of them, most irrelevant.
+        // Translate it into the one thing the operator actually has to do.
+        if (error.status === 403) {
+          throw new Error(
+            `Your HubSpot private app is missing the schema write scope for "${objectType}".\n` +
+              'Add these four scopes to the private app, save, and re-run `npm run bootstrap`:\n' +
+              '  crm.schemas.companies.write\n' +
+              '  crm.schemas.contacts.write\n' +
+              '  crm.schemas.deals.write\n' +
+              '  crm.schemas.line_items.write\n' +
+              'HubSpot → Settings → Integrations → Private Apps → your app → Scopes.',
+            { cause: error }
+          );
+        }
+        throw error;
+      }
+
       created += 1;
       logger.info('Property created', {
         objectType,

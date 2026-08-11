@@ -66,10 +66,15 @@ class HubSpotClient {
    * @param {string} path e.g. `/crm/v3/objects/companies`
    * @param {object} [body]
    * @param {Record<string, unknown>} [logContext]
+   * @param {object} [options]
+   * @param {number[]} [options.expectedStatuses] statuses the caller handles
+   *   itself, logged at debug rather than error. A 404 from an existence check
+   *   is a normal answer, not a fault, and should not look like one in the logs.
    * @returns {Promise<any>} the parsed JSON body (null for 204 responses)
    */
-  async request(method, path, body, logContext = {}) {
+  async request(method, path, body, logContext = {}, options = {}) {
     const startedAt = Date.now();
+    const expectedStatuses = options.expectedStatuses || [];
 
     const send = async () => {
       const response = await this.limiter.schedule(() =>
@@ -115,7 +120,9 @@ class HubSpotClient {
 
       return result;
     } catch (error) {
-      this.log.error('HubSpot request failed', {
+      const expected = expectedStatuses.includes(error.status);
+
+      this.log[expected ? 'debug' : 'error']('HubSpot request failed', {
         ...logContext,
         method,
         path,
@@ -175,11 +182,14 @@ class HubSpotClient {
     try {
       return await this.request(
         'GET',
-        `/crm/v3/objects/${objectType}/${objectId}${query}`
+        `/crm/v3/objects/${objectType}/${objectId}${query}`,
+        undefined,
+        { objectType, objectId },
+        // A deleted or mistyped id is an expected outcome of an idempotency
+        // check, not a failure — the caller falls back to searching.
+        { expectedStatuses: [404] }
       );
     } catch (error) {
-      // A deleted or mistyped id is an expected outcome of an idempotency
-      // check, not a failure — the caller falls back to searching.
       if (error.status === 404) return null;
       throw error;
     }
@@ -342,7 +352,11 @@ class HubSpotClient {
     try {
       return await this.request(
         'GET',
-        `/crm/v3/properties/${objectType}/${propertyName}`
+        `/crm/v3/properties/${objectType}/${propertyName}`,
+        undefined,
+        { objectType, propertyName },
+        // "Not found" is the expected answer half the time here.
+        { expectedStatuses: [404] }
       );
     } catch (error) {
       if (error.status === 404) return null;
