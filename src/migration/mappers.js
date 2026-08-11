@@ -10,6 +10,7 @@
  */
 
 const config = require('../shared/config');
+const { mapIndustry } = require('../shared/industry');
 const {
   parseDate,
   parseAmount,
@@ -27,34 +28,6 @@ const {
 } = require('../shared/hubspotSchema');
 
 const SOURCE = 'csv';
-
-/**
- * CSV `industry` values mapped onto HubSpot's fixed `industry` enumeration.
- * HubSpot rejects values outside this list, so anything unrecognised falls
- * back to `OTHER` rather than failing the record.
- */
-const INDUSTRY_BY_CSV_VALUE = {
-  agriculture: 'FARMING',
-  biotech: 'BIOTECHNOLOGY',
-  construction: 'CONSTRUCTION',
-  defense: 'DEFENSE_SPACE',
-  education: 'HIGHER_EDUCATION',
-  energy: 'OIL_ENERGY',
-  finance: 'FINANCIAL_SERVICES',
-  'food & beverage': 'FOOD_BEVERAGES',
-  healthcare: 'HOSPITAL_HEALTH_CARE',
-  hospitality: 'HOSPITALITY',
-  insurance: 'INSURANCE',
-  logistics: 'LOGISTICS_AND_SUPPLY_CHAIN',
-  manufacturing: 'MACHINERY',
-  media: 'BROADCAST_MEDIA',
-  pharmaceuticals: 'PHARMACEUTICALS',
-  'r&d': 'RESEARCH',
-  retail: 'RETAIL',
-  robotics: 'MECHANICAL_OR_INDUSTRIAL_ENGINEERING',
-  technology: 'INFORMATION_TECHNOLOGY_AND_SERVICES',
-  telecom: 'TELECOMMUNICATIONS',
-};
 
 /**
  * The CSV `deal_stage` column already uses HubSpot's internal stage ids. They
@@ -84,15 +57,6 @@ const KNOWN_LIFECYCLE_STAGES = new Set([
   'evangelist',
   'other',
 ]);
-
-/**
- * @param {string} value
- * @returns {string} a HubSpot `industry` enumeration value
- */
-function mapIndustry(value) {
-  if (!value) return 'OTHER';
-  return INDUSTRY_BY_CSV_VALUE[String(value).trim().toLowerCase()] || 'OTHER';
-}
 
 /**
  * @param {string} value
@@ -133,11 +97,16 @@ function mapCompany(row) {
     warnings.push(`Could not parse number_of_employees "${row.number_of_employees}"`);
   }
 
+  const industry = mapIndustry(row.industry);
+  if (row.industry && industry === null) {
+    warnings.push(`Industry "${row.industry}" is not a HubSpot value, omitted`);
+  }
+
   return {
     properties: compactProperties({
       name,
       domain,
-      industry: mapIndustry(row.industry),
+      industry,
       numberofemployees: employees,
       [EXTERNAL_ID_PROPERTY]: buildExternalId(
         SOURCE,
@@ -253,7 +222,6 @@ module.exports = {
   mapDeal,
   mapIndustry,
   mapDealStage,
-  INDUSTRY_BY_CSV_VALUE,
   KNOWN_DEAL_STAGES,
   DEFAULT_DEAL_STAGE,
   SOURCE,

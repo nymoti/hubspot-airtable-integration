@@ -2,6 +2,7 @@
 
 const { mapCompany, mapContact, mapDeal, mapIndustry } = require('../src/migration/mappers');
 const { EXTERNAL_ID_PROPERTY } = require('../src/shared/hubspotSchema');
+const { HUBSPOT_INDUSTRIES } = require('../src/shared/industry');
 
 describe('mapCompany', () => {
   const row = {
@@ -52,9 +53,27 @@ describe('mapIndustry', () => {
     expect(mapIndustry('telecom')).toBe('TELECOMMUNICATIONS');
   });
 
-  it('falls back to OTHER rather than sending a value HubSpot will reject', () => {
-    expect(mapIndustry('Underwater Basket Weaving')).toBe('OTHER');
-    expect(mapIndustry('')).toBe('OTHER');
+  it('accepts a value that is already a HubSpot enumeration value', () => {
+    // Re-syncing a record we previously wrote must be stable.
+    expect(mapIndustry('INFORMATION_TECHNOLOGY_AND_SERVICES')).toBe(
+      'INFORMATION_TECHNOLOGY_AND_SERVICES'
+    );
+  });
+
+  // There is no `OTHER` in HubSpot's enumeration, so a catch-all would be
+  // rejected exactly like the raw value was. Returning null omits the property.
+  it('returns null for a value it cannot map, rather than inventing one', () => {
+    expect(mapIndustry('Underwater Basket Weaving')).toBeNull();
+    expect(mapIndustry('')).toBeNull();
+    expect(mapIndustry(null)).toBeNull();
+  });
+
+  it('never returns a value outside HubSpot enumeration', () => {
+    const samples = ['Technology', 'Robotics', 'Nonsense', '', 'Retail', 'R&D'];
+    for (const sample of samples) {
+      const mapped = mapIndustry(sample);
+      if (mapped !== null) expect(HUBSPOT_INDUSTRIES.has(mapped)).toBe(true);
+    }
   });
 });
 

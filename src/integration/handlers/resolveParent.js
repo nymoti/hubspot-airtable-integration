@@ -116,8 +116,26 @@ async function resolveParentHubspotId(params) {
     parentRecordId: parentRecord.id,
   });
 
-  const result = await syncParent(parentRecord);
-  return result?.hubspotId ?? missing(`Syncing parent ${parentRecord.id} produced no HubSpot id`);
+  try {
+    const result = await syncParent(parentRecord);
+    return (
+      result?.hubspotId ??
+      missing(`Syncing parent ${parentRecord.id} produced no HubSpot id`)
+    );
+  } catch (error) {
+    // A parent that HubSpot rejects must not take its children down with it.
+    // One invalid company previously failed its contacts and deals too, so a
+    // single bad field turned into a cascade of unrelated failures. The child
+    // is still worth saving; only the association is deferred, and the next
+    // event retries it once the parent is fixed.
+    logger.error('Parent could not be synced; continuing without the association', {
+      parentTable,
+      parentRecordId: parentRecord.id,
+      code: error.code,
+      error: error.message,
+    });
+    return missing(`Parent ${parentRecord.id} failed to sync: ${error.message}`);
+  }
 }
 
 module.exports = { resolveParentHubspotId, firstLinkedRecordId };

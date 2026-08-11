@@ -7,6 +7,7 @@ const {
   parseInteger,
   compactProperties,
 } = require('../../shared/transforms');
+const { mapIndustry } = require('../../shared/industry');
 const { ValidationError } = require('../../shared/errors');
 
 /**
@@ -27,7 +28,11 @@ function mapCompanyFields(fields) {
   return compactProperties({
     name: fields.company_name,
     domain: normaliseDomain(fields.domain),
-    industry: fields.industry,
+    // HubSpot's `industry` is a fixed enumeration and it rejects the entire
+    // record for an unknown value. Passing the Airtable text straight through
+    // is what made every company sync fail with "Technology was not one of the
+    // allowed options".
+    industry: mapIndustry(fields.industry),
     numberofemployees: parseInteger(fields.number_of_employees),
   });
 }

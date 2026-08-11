@@ -66,6 +66,32 @@ describe('handleCompany', () => {
     expect(ctx.airtable.writeBacks).toHaveLength(1);
   });
 
+  // Airtable stores free text ("Technology"), HubSpot requires an enumeration
+  // value. Sending it raw made HubSpot reject every company, and by cascade
+  // every contact and deal that triggered a company sync.
+  it('translates industry into a HubSpot enumeration value', async () => {
+    const ctx = buildContext({ Companies: [COMPANY_RECORD] });
+    const result = await handleCompany({ record: COMPANY_RECORD, ...ctx });
+
+    const stored = await ctx.client.getObject(OBJECT_TYPES.COMPANIES, result.hubspotId);
+    expect(stored.properties.industry).toBe('INFORMATION_TECHNOLOGY_AND_SERVICES');
+  });
+
+  it('omits industry entirely when it cannot be mapped', async () => {
+    const ctx = buildContext();
+    const record = {
+      id: 'recCompany9',
+      fields: { company_name: 'Odd Co', industry: 'Underwater Basket Weaving' },
+    };
+
+    const result = await handleCompany({ record, ...ctx });
+    const stored = await ctx.client.getObject(OBJECT_TYPES.COMPANIES, result.hubspotId);
+
+    // Losing one field beats losing the record.
+    expect(stored.properties.industry).toBeUndefined();
+    expect(stored.properties.name).toBe('Odd Co');
+  });
+
   it('rejects a company with no name', async () => {
     const ctx = buildContext();
     await expect(

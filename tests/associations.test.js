@@ -91,6 +91,44 @@ describe('resolveParentHubspotId', () => {
     expect(id).toBe('5100');
   });
 
+  // One invalid company previously failed its contacts and deals too, turning
+  // a single bad field into a cascade of unrelated failures.
+  it('does not propagate a parent sync failure to the child', async () => {
+    const airtable = new FakeAirtableService({
+      Companies: [{ id: 'recCo1', fields: { company_id: 'C-1', company_name: 'Acme' } }],
+    });
+    const syncParent = jest.fn().mockRejectedValue(new Error('HubSpot rejected industry'));
+
+    const id = await resolveParentHubspotId({
+      ...baseParams,
+      fields: { Company: ['recCo1'] },
+      airtable,
+      syncParent,
+    });
+
+    // The association is skipped; the child is still saved by its handler.
+    expect(id).toBeNull();
+  });
+
+  it('still throws when a required parent fails to sync', async () => {
+    const airtable = new FakeAirtableService({
+      Deals: [{ id: 'recD1', fields: { deal_id: 'D-1' } }],
+    });
+
+    await expect(
+      resolveParentHubspotId({
+        ...baseParams,
+        parentTable: 'Deals',
+        linkFieldNames: ['Deal'],
+        businessKeyField: 'deal_id',
+        fields: { Deal: ['recD1'] },
+        airtable,
+        syncParent: jest.fn().mockRejectedValue(new Error('boom')),
+        required: true,
+      })
+    ).rejects.toThrow(MissingReferenceError);
+  });
+
   it('returns null when the parent is optional and missing', async () => {
     const airtable = new FakeAirtableService({ Companies: [] });
 
