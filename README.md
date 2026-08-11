@@ -98,8 +98,9 @@ npm install
 cp .env.example .env      # then fill in your credentials
 mkdir -p data             # then add companies.csv, contacts.csv, deals.csv
 
+npm run doctor            # check the HubSpot token actually has the scopes needed
 npm run bootstrap         # one-off: create the custom properties in HubSpot
-npm test                  # 140 tests, no network calls
+npm test                  # 180 tests, no network calls
 
 npm run migrate:dry-run   # Part 1: validate the CSVs, write nothing
 npm run migrate           # Part 1: import for real
@@ -283,6 +284,32 @@ be resolved is still created; only the association is deferred to the next
 event. A Line Item is the exception — it has nowhere to live without its Deal,
 so an unresolvable parent is a hard failure.
 
+### Defects found after deployment
+
+Four bugs surfaced only once the service was running in Cloud Functions against
+real data. Each was diagnosed from a single structured log line naming the
+record and the reason — which is the argument for the logging design in
+practice rather than in principle.
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Every `/rescan` returned `Cannot read properties of undefined` | Under the Functions Framework the app runs as a handler on the framework's own request object, where `req.query` is undefined. Plain Express populates it, so local runs and unit tests both passed. | `queryParam()` parses the URL directly, working in either environment. |
+| Every notification would have returned 500 | The framework consumes the request stream and parses JSON before the app runs; parsing again threw `stream is not readable`. Only requests *with a body* were affected — which is every real notification, but not the bodyless `/rescan` call that first exposed the query bug. | JSON is parsed only when nothing upstream has. `req.rawBody` comes from the framework there and from the parser locally, so HMAC verification is identical in both. |
+| All companies rejected, cascading to 8 failures | `industry` was sent as raw Airtable text. HubSpot's `industry` is a fixed enumeration and rejects the whole record. The translation existed, but only in the migration. | `shared/industry.js`, used by both parts. |
+| One bad company failed its contacts and deals too | Children sync their parent on demand and inherited its exception. | A failed parent now costs only the association; the child is still saved and retries the link on the next event. |
+
+The first two are worth dwelling on: **both were invisible to the unit suite and
+to the local dev server**, because plain Express and the Functions Framework
+differ in exactly these two respects. They were caught by running the real app
+under the real framework before trusting it. That gap is the strongest argument
+for the contract tests listed under
+[What I would do with more time](#what-i-would-do-with-more-time).
+
+A fifth, milder issue: Airtable seeds new tables with blank rows, which have a
+modification timestamp and so appear in a rescan. They are now reported as
+`skipped` rather than `failed` — a failure count only means something if
+everything in it is genuinely a failure.
+
 ---
 
 ## Idempotency
@@ -369,13 +396,27 @@ entry layout.
 ### 1. HubSpot
 
 Create a Private App in your sandbox with the scopes listed in `.env.example`,
-then create the custom properties:
+then verify and bootstrap:
 
 ```bash
-npm run bootstrap
+npm run doctor      # probes each permission and names the missing ones
+npm run bootstrap   # creates the custom properties
 ```
 
-Idempotent — safe to re-run, and it reports what already existed.
+Both are idempotent and safe to re-run.
+
+`doctor` exists because HubSpot's permission errors are close to unusable in
+practice: a 403 on a property write lists **26 different scopes** that could
+grant the call, naming none as the one you lack, and the token-introspection
+endpoint does not cover private-app tokens at all. Probing each call and
+reporting the result is the only reliable answer. Two scope details are easy to
+miss, and `doctor` surfaces both:
+
+- Line items are granted by the **`e-commerce`** scope. There is no
+  `crm.schemas.line_items.write`.
+- `crm.schemas.*.write` is needed only by `bootstrap`. The deployed function
+  never creates properties, so its token can be narrower — worth doing if you
+  are running this beyond an assessment.
 
 ### 2. Airtable
 
@@ -500,7 +541,7 @@ use on a paid plan without any code change.
 ## Testing
 
 ```bash
-npm test                # 140 tests
+npm test                # 180 tests
 npm run test:coverage
 ```
 
@@ -519,8 +560,8 @@ against call counts.
 | `idempotency.test.js` | All three resolution tiers, replay, adoption, stale ids, namespacing |
 | `handlers.test.js` | Per-entity mapping, write-back, association, validation |
 | `associations.test.js` | Link resolution, business-key fallback, on-demand parent sync |
-| `webhook.test.js` | Payload normalisation, authentication, error → status mapping |
-| `airtableWebhook.test.js` | HMAC signature verification, notification rejection, rescan ordering and fault tolerance |
+| `webhook.test.js` | Payload normalisation, authentication, error → status mapping, body parsing under a framework that pre-parses |
+| `airtableWebhook.test.js` | HMAC signature verification, notification rejection, rescan ordering and fault tolerance, blank-row detection |
 | `retry.test.js` | Backoff, `Retry-After`, retryable classification, rate limiter ordering |
 
 ---
@@ -550,11 +591,13 @@ against call counts.
 │       ├── hubspotClient.js      SDK transport + rate limit + retry + errors
 │       ├── hubspotSchema.js      object types, external-id property
 │       ├── transforms.js         pure value parsing
+│       ├── industry.js           free text → HubSpot industry enumeration
 │       ├── logger.js             structured JSON → Cloud Logging
 │       ├── errors.js             typed errors, retryable classification
 │       └── config.js             validated configuration
 ├── scripts/
 │   ├── bootstrap-hubspot.js      one-off custom property creation
+│   ├── check-hubspot-access.js   reports which permissions the token has
 │   ├── manage-airtable-webhook.js  create / list / refresh / delete
 │   └── airtable-automation.js    paid-plan alternative (reference only)
 ├── data/                         CSVs for Part 1 (gitignored — supplied separately)
@@ -649,10 +692,15 @@ deploying to GCP on merge to `main` via Workload Identity Federation (no
 long-lived service-account key). A staging portal and staging base so
 integration changes are exercised against real APIs before production.
 
-**Contract tests against real APIs.** The unit suite mocks both APIs, which is
-right for fast feedback but cannot catch HubSpot changing a validation rule. A
-nightly job running the same handlers against a sandbox portal would close that
-gap.
+**Contract tests against real APIs, and against the real runtime.** The unit
+suite mocks both APIs, which is right for fast feedback but cannot catch HubSpot
+changing a validation rule — nor the two Functions Framework behaviours
+described under [Defects found after deployment](#defects-found-after-deployment),
+which plain Express simply does not reproduce. Two additions would close both
+gaps: a nightly job exercising the handlers against a sandbox portal, and a
+smoke test that boots the app under `functions-framework` and posts a signed
+notification to it. The second is perhaps twenty lines and would have caught
+both deployment bugs before they ever reached GCP.
 
 **Migration improvements.** Streaming the CSVs in two passes so the approach
 holds at millions of rows rather than hundreds; and a `--only=deals` flag to
