@@ -101,8 +101,11 @@ async function main() {
       'Scopes tab. Tick the scopes listed above, then click Save and confirm',
       'with "Continue updating". Re-run `npm run doctor` to verify.',
       '',
-      'Note: `crm.schemas.*.write` is not probed here (it would create a real',
-      'property). If `npm run bootstrap` returns 403, that is the scope to add.',
+      'Line items are granted by the "e-commerce" scope, not by a',
+      'crm.objects.line_items.* toggle — that scope covers both.',
+      '',
+      'Schema write scopes are not probed here (probing would create a real',
+      'property). If `npm run bootstrap` returns 403, that is what to add.',
       '',
     ].join('\n')
   );
