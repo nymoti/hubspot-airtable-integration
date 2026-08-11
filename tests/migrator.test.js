@@ -255,6 +255,61 @@ describe('Migrator', () => {
     );
   });
 
+  describe('dry run', () => {
+    beforeEach(() => {
+      config.migration.dryRun = true;
+    });
+
+    afterEach(() => {
+      config.migration.dryRun = false;
+    });
+
+    it('writes nothing to HubSpot', async () => {
+      const hubspot = new StubHubSpot();
+      await buildMigrator(hubspot).run();
+
+      expect(hubspot.created.companies).toHaveLength(0);
+      expect(hubspot.updated).toHaveLength(0);
+      expect(hubspot.associations).toHaveLength(0);
+    });
+
+    // A dry run exists to predict the real run. Before this was fixed it
+    // returned before populating the id map, so every contact and deal looked
+    // orphaned — on the real dataset that was 800 false warnings hiding the
+    // seven genuine ones.
+    it('reports only the genuinely dangling references', async () => {
+      const hubspot = new StubHubSpot();
+      const migrator = buildMigrator(hubspot);
+      await migrator.run();
+
+      const orphanWarnings = migrator.report.warnings.filter((warning) =>
+        warning.message.includes('does not exist in companies.csv')
+      );
+
+      // Only contact 3, which references company 307.
+      expect(orphanWarnings).toHaveLength(1);
+      expect(orphanWarnings[0].sourceId).toBe('3');
+    });
+
+    it('still rejects rows that could never be imported', async () => {
+      const hubspot = new StubHubSpot();
+      const migrator = buildMigrator(hubspot);
+      await migrator.run();
+
+      expect(migrator.report.counts.contacts.rejected).toBe(1);
+    });
+
+    it('predicts how many associations the real run would write', async () => {
+      const hubspot = new StubHubSpot();
+      const migrator = buildMigrator(hubspot);
+      const summary = await migrator.run();
+
+      // Contacts 1 and 2 resolve; 3 is orphaned and 4 was rejected.
+      expect(summary.associations['Contact → Company']).toBe(2);
+      expect(summary.associations['Deal → Company']).toBe(4);
+    });
+  });
+
   it('writes a report naming every problem row', async () => {
     const hubspot = new StubHubSpot();
     const migrator = buildMigrator(hubspot);

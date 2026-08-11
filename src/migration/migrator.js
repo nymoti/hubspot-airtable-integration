@@ -161,9 +161,19 @@ class Migrator {
     }
 
     if (config.migration.dryRun) {
+      // Record a placeholder id for every candidate. Later stages check parent
+      // references against this map, so without it a dry run would report
+      // every contact and deal as an orphan — 800 false warnings burying the
+      // seven real ones. A dry run that cannot predict the real run is worse
+      // than no dry run at all.
+      for (const candidate of candidates) {
+        this.idMap[objectType].set(candidate.sourceId, `dry-run:${candidate.externalId}`);
+      }
+
       this.log.warn('Dry run — skipping writes', {
         objectType,
         wouldUpsert: candidates.length,
+        rejected: this.report.counts[objectType].rejected,
       });
       return;
     }
@@ -372,11 +382,6 @@ class Migrator {
    * @param {Array<Record<string,string>>} dealRows
    */
   async associateAll(contactRows, dealRows) {
-    if (config.migration.dryRun) {
-      this.log.warn('Dry run — skipping associations');
-      return;
-    }
-
     await this.associate(
       'Contact → Company',
       OBJECT_TYPES.CONTACTS,
@@ -439,6 +444,18 @@ class Migrator {
    */
   async associate(label, fromType, toType, pairs) {
     this.log.info('Association stage started', { label, pairs: pairs.length });
+
+    // Pair resolution has already run, so a dry run can report exactly how many
+    // associations would be written and which references are dangling — the
+    // most useful thing it produces — without issuing a single API call.
+    if (config.migration.dryRun) {
+      this.report.associated(label, pairs.length);
+      this.log.warn('Dry run — skipping association writes', {
+        label,
+        wouldAssociate: pairs.length,
+      });
+      return;
+    }
 
     let succeeded = 0;
 
