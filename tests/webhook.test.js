@@ -1,7 +1,7 @@
 'use strict';
 
 const request = require('supertest');
-const { createApp } = require('../src/integration/app');
+const { createApp, queryParam } = require('../src/integration/app');
 const { normaliseEvent, ENTITIES } = require('../src/integration/normaliseEvent');
 const { ValidationError } = require('../src/shared/errors');
 
@@ -154,6 +154,75 @@ describe('POST /webhook', () => {
       .send({ table: 'Companies', recordId: 'recA' });
 
     expect(response.headers['x-correlation-id']).toBe('trace-123');
+  });
+});
+
+describe('queryParam', () => {
+  it('reads from req.query when Express populated it', () => {
+    expect(queryParam({ query: { minutes: '60' } }, 'minutes')).toBe('60');
+  });
+
+  // Under the GCP Functions Framework the app runs as a handler on the
+  // framework's own request object, and `req.query` is undefined. Reading it
+  // directly threw "Cannot read properties of undefined" on every /rescan call
+  // in production while working fine locally.
+  it('falls back to parsing the URL when req.query is undefined', () => {
+    expect(queryParam({ url: '/rescan?minutes=1440' }, 'minutes')).toBe('1440');
+    expect(queryParam({ originalUrl: '/rescan?minutes=30&x=1' }, 'minutes')).toBe('30');
+  });
+
+  it('returns undefined rather than throwing when there is no query string', () => {
+    expect(queryParam({ url: '/rescan' }, 'minutes')).toBeUndefined();
+    expect(queryParam({}, 'minutes')).toBeUndefined();
+  });
+});
+
+describe('body parsing', () => {
+  const express = require('express');
+
+  /**
+   * Mounts the app behind a parser that has already consumed the request
+   * stream — exactly what the GCP Functions Framework does before handing the
+   * request to our app.
+   */
+  function underFrameworkLikeParser(syncService) {
+    const outer = express();
+    outer.use(express.json());
+    outer.use(createApp({ syncService }));
+    return outer;
+  }
+
+  // Parsing a second time threw "stream is not readable" and failed every
+  // request carrying a body — i.e. every real Airtable notification, while
+  // working perfectly on the local dev server.
+  it('handles a body already parsed upstream instead of re-reading the stream', async () => {
+    const syncService = { process: jest.fn().mockResolvedValue({ status: 'synced' }) };
+
+    const response = await request(underFrameworkLikeParser(syncService))
+      .post('/webhook')
+      .set('X-Webhook-Secret', process.env.WEBHOOK_SECRET)
+      .send({ table: 'Companies', recordId: 'recABC' });
+
+    expect(response.status).toBe(200);
+    expect(syncService.process).toHaveBeenCalledWith(
+      expect.objectContaining({ table: 'Companies', recordId: 'recABC' }),
+      expect.anything()
+    );
+  });
+
+  it('still parses the body when nothing upstream has', async () => {
+    const syncService = { process: jest.fn().mockResolvedValue({ status: 'synced' }) };
+
+    const response = await request(createApp({ syncService }))
+      .post('/webhook')
+      .set('X-Webhook-Secret', process.env.WEBHOOK_SECRET)
+      .send({ table: 'Deals', recordId: 'recXYZ' });
+
+    expect(response.status).toBe(200);
+    expect(syncService.process).toHaveBeenCalledWith(
+      expect.objectContaining({ table: 'Deals', recordId: 'recXYZ' }),
+      expect.anything()
+    );
   });
 });
 

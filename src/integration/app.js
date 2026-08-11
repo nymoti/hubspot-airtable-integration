@@ -31,6 +31,29 @@ const { ValidationError, MissingReferenceError } = require('../shared/errors');
  */
 
 /**
+ * Reads a query-string parameter without depending on `req.query`.
+ *
+ * Express normally populates `req.query`, but when the app runs as a handler
+ * under the GCP Functions Framework it is undefined — the framework owns the
+ * outer request object and our app's query middleware never runs against it.
+ * Parsing the URL directly works in both environments.
+ *
+ * @param {import('express').Request} req
+ * @param {string} name
+ * @returns {string|undefined}
+ */
+function queryParam(req, name) {
+  const fromExpress = req.query?.[name];
+  if (fromExpress !== undefined) return fromExpress;
+
+  const url = req.originalUrl || req.url || '';
+  const separator = url.indexOf('?');
+  if (separator === -1) return undefined;
+
+  return new URLSearchParams(url.slice(separator + 1)).get(name) ?? undefined;
+}
+
+/**
  * Constant-time comparison so the shared secret cannot be recovered by
  * measuring how long a rejection takes.
  *
@@ -86,14 +109,24 @@ function createApp(options = {}) {
   // The raw body is retained because Airtable's HMAC is computed over the
   // exact bytes sent; re-serialising the parsed object would change key order
   // and whitespace, and the signature would never verify.
-  app.use(
-    express.json({
-      limit: '1mb',
-      verify: (req, res, buffer) => {
-        req.rawBody = buffer;
-      },
-    })
-  );
+  const parseJson = express.json({
+    limit: '1mb',
+    verify: (req, res, buffer) => {
+      req.rawBody = buffer;
+    },
+  });
+
+  // The GCP Functions Framework reads the request stream and parses JSON
+  // before handing control to this app, whereas the local dev server does not.
+  // Parsing again in the Cloud Functions case throws "stream is not readable"
+  // and fails every request that carries a body — so parse only when nobody
+  // has done it already. `req.rawBody` is supplied by the framework in that
+  // case, and by the `verify` hook above otherwise, which keeps signature
+  // verification working identically in both environments.
+  app.use((req, res, next) => {
+    if (req.body !== undefined) return next();
+    return parseJson(req, res, next);
+  });
 
   // Bind a correlation id early so it appears on request logs and is returned
   // to the caller, making a report of "this record didn't sync" traceable.
@@ -165,7 +198,7 @@ function createApp(options = {}) {
    */
   app.post('/rescan', authenticate, async (req, res) => {
     try {
-      const minutes = Number(req.query.minutes);
+      const minutes = Number(queryParam(req, 'minutes'));
       const since = Number.isFinite(minutes)
         ? new Date(Date.now() - minutes * 60_000)
         : undefined;
@@ -237,4 +270,4 @@ function handleError(error, req, res) {
   });
 }
 
-module.exports = { createApp, authenticate, secretsMatch };
+module.exports = { createApp, authenticate, secretsMatch, queryParam };
