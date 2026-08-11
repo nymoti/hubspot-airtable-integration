@@ -36,6 +36,33 @@ const TABLE_BY_ENTITY = {
   [ENTITIES.LINE_ITEM]: () => config.airtable.tables.lineItems,
 };
 
+/**
+ * Fields that exist on every row regardless of whether a human has typed
+ * anything: the computed modification timestamp and our own write-back.
+ */
+const SYSTEM_FIELDS = new Set(['last_modified', 'hubspot_record_id']);
+
+/**
+ * True when a record carries no user-entered data.
+ *
+ * Airtable seeds every new table with blank rows, and they have a
+ * `last modified time` like any other record, so a rescan picks them up. They
+ * are not errors — there is simply nothing to sync — and reporting them as
+ * failures would train whoever reads the logs to ignore a genuine failure
+ * count.
+ *
+ * @param {Record<string, any>} fields
+ * @returns {boolean}
+ */
+function isBlankRecord(fields) {
+  return !Object.entries(fields || {}).some(([name, value]) => {
+    if (SYSTEM_FIELDS.has(name)) return false;
+    if (value === null || value === undefined || value === '') return false;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  });
+}
+
 class SyncService {
   /**
    * @param {object} [options]
@@ -94,6 +121,11 @@ class SyncService {
       record = { id: event.recordId, fields: event.fields };
     }
 
+    if (isBlankRecord(record.fields)) {
+      log.info('Record has no data yet; skipping');
+      return { status: 'skipped', reason: 'blank_record', correlationId };
+    }
+
     const handler = HANDLERS[event.entity];
     const result = await handler({
       record,
@@ -109,4 +141,4 @@ class SyncService {
   }
 }
 
-module.exports = { SyncService, HANDLERS, TABLE_BY_ENTITY };
+module.exports = { SyncService, HANDLERS, TABLE_BY_ENTITY, isBlankRecord };

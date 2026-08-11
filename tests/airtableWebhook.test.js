@@ -221,6 +221,35 @@ describe('AirtableWebhookApi', () => {
   });
 });
 
+describe('isBlankRecord', () => {
+  const { isBlankRecord } = require('../src/integration/syncService');
+
+  // Airtable seeds every new table with empty rows. They carry a
+  // `last modified time` like any other record, so a rescan finds them —
+  // but they are not failures, and counting them as such would make a real
+  // failure count meaningless.
+  it('treats a row with no user data as blank', () => {
+    expect(isBlankRecord({})).toBe(true);
+    expect(isBlankRecord({ last_modified: '2026-08-11T00:00:00.000Z' })).toBe(true);
+    expect(isBlankRecord({ last_modified: 'x', hubspot_record_id: '' })).toBe(true);
+  });
+
+  it('treats a row with any user data as populated', () => {
+    expect(isBlankRecord({ company_name: 'Acme' })).toBe(false);
+    expect(isBlankRecord({ number_of_employees: 0 })).toBe(false);
+    expect(isBlankRecord({ Company: ['recX'] })).toBe(false);
+  });
+
+  it('ignores empty strings and cleared link fields', () => {
+    expect(isBlankRecord({ deal_name: '', Company: [] })).toBe(true);
+  });
+
+  it('does not treat a synced-but-empty row as populated', () => {
+    // hubspot_record_id is our own write-back, not user data.
+    expect(isBlankRecord({ hubspot_record_id: '12345' })).toBe(true);
+  });
+});
+
 describe('RescanService', () => {
   /** Airtable stub returning canned modified records per table. */
   function fakeAirtable(byTable) {
