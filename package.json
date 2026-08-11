@@ -7,6 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "doctor": "node scripts/check-hubspot-access.js",
     "bootstrap": "node scripts/bootstrap-hubspot.js",
     "webhook:create": "node scripts/manage-airtable-webhook.js create",
     "webhook:list": "node scripts/manage-airtable-webhook.js list",
